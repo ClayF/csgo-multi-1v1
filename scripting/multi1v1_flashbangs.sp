@@ -20,34 +20,34 @@ public Plugin myinfo = {
 };
 
 public void OnPluginStart() {
-	g_hFlashCookie = RegClientCookie("multi1v1_flashbang", "Multi-1v1 allow flashbangs in rounds", CookieAccess_Protected);
+    LoadTranslations("multi1v1.phrases");
+    g_hFlashCookie = RegClientCookie("multi1v1_flashbang", "Multi-1v1 allow flashbangs in rounds", CookieAccess_Protected);
 }
 
 public void OnClientConnected(int client) {
     g_GiveFlash[client] = false;
 }
 
-public void Multi1v1_OnGunsMenuDone(int client) {
-    Handle menu = CreateMenu(MenuHandler_FlashChoice);
-    SetMenuExitButton(menu, true);
-    SetMenuTitle(menu, "Give players flashbangs?");
-    AddMenuBool(menu, true, "Yes");
-    AddMenuBool(menu, false, "No");
-    DisplayMenu(menu, client, 10);
+public void Multi1v1_OnGunsMenuCreated(int client, Menu menu) {
+    char enabledString[32];
+    GetEnabledString(enabledString, sizeof(enabledString), g_GiveFlash[client], client);
+    AddMenuOption(menu, "flashbangs", "Flashbangs: %s", enabledString);
 }
 
-public int MenuHandler_FlashChoice(Handle menu, MenuAction action, int param1, int param2) {
+public void Multi1v1_GunsMenuCallback(Menu menu, MenuAction action, int param1, int param2) {
     if (action == MenuAction_Select) {
         int client = param1;
-        bool choice = GetMenuBool(menu, param2);
-        g_GiveFlash[client] = choice;
-        SetCookieBool(client, g_hFlashCookie, choice);
-    } else if (action == MenuAction_End) {
-        CloseHandle(menu);
+        char buffer[128];
+        menu.GetItem(param2, buffer, sizeof(buffer));
+        if (StrEqual(buffer, "flashbangs")) {
+            g_GiveFlash[client] = !g_GiveFlash[client];
+            SetCookieBool(client, g_hFlashCookie, g_GiveFlash[client]);
+            Multi1v1_GiveWeaponsMenu(client, GetMenuSelectionPosition());
+        }
     }
 }
 
-public void Multi1v1_AfterPlayerSpawn(int client) {
+public void Multi1v1_AfterPlayerSetup(int client) {
     if (!IsActivePlayer(client)) {
         return;
     }
@@ -61,7 +61,7 @@ public void Multi1v1_AfterPlayerSpawn(int client) {
     }
 }
 
-public int OnClientCookiesCached(int client) {
+public void OnClientCookiesCached(int client) {
     if (IsFakeClient(client))
         return;
     g_GiveFlash[client] = GetCookieBool(client, g_hFlashCookie);

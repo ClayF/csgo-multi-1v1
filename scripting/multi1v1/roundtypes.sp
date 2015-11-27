@@ -2,6 +2,13 @@
  * Roundtype runtime registration/selection code.
  */
 
+public void LoadRoundTypes() {
+    Multi1v1_ClearRoundTypes();
+    Multi1v1_AddStandardRounds();
+    AddCustomRounds();
+    Call_StartForward(g_hOnRoundTypesAdded);
+    Call_Finish();
+}
 
 /**
  * Returns a round type appropriate for a given pair of players.
@@ -35,7 +42,7 @@ public int GetRoundType(int arena, int client1, int client2) {
         int index = GetArrayRandomIndex(types);
         choice = GetArrayCell(types, index);
     }
-    CloseHandle(types);
+    delete types;
 
     Call_StartForward(g_hOnRoundTypeDecided);
     Call_PushCell(arena);
@@ -50,7 +57,7 @@ public int GetRoundType(int arena, int client1, int client2) {
 static void AddRounds(ArrayList types, int client1, int client2, int roundType) {
     int weight = 1;
 
-    int prefWeight = g_hPreferenceWeight.IntValue;
+    int prefWeight = g_PreferenceWeightCvar.IntValue;
     if (g_Preference[client1] == roundType)
         weight += prefWeight;
     if (g_Preference[client2] == roundType)
@@ -66,7 +73,7 @@ static void AddRounds_CheckAllowed(ArrayList types, int client1, int client2, in
 }
 
 public int AddRoundType(Handle pluginSource, const char[] displayName, const char[] internalName,
-                        RoundTypeWeaponHandler weaponHandler, RoundTypeMenuHandler menuHandler,
+                        RoundTypeWeaponHandler weaponHandler,
                         bool optional, bool ranked, const char[] ratingFieldName, bool enabled) {
 
     if (g_numRoundTypes >= MAX_ROUND_TYPES) {
@@ -78,7 +85,6 @@ public int AddRoundType(Handle pluginSource, const char[] displayName, const cha
     strcopy(g_RoundTypeDisplayNames[g_numRoundTypes], ROUND_TYPE_NAME_LENGTH, displayName);
     String_ToLower(internalName, g_RoundTypeNames[g_numRoundTypes], ROUND_TYPE_NAME_LENGTH);
     g_RoundTypeWeaponHandlers[g_numRoundTypes] = weaponHandler;
-    g_RoundTypeMenuHandlers[g_numRoundTypes] = menuHandler;
     g_RoundTypeOptional[g_numRoundTypes] = optional;
     g_RoundTypeRanked[g_numRoundTypes] = ranked;
     strcopy(g_RoundTypeFieldNames[g_numRoundTypes], ROUND_TYPE_NAME_LENGTH, ratingFieldName);
@@ -87,73 +93,9 @@ public int AddRoundType(Handle pluginSource, const char[] displayName, const cha
     return g_numRoundTypes - 1;
 }
 
-public void ReturnMenuControl(int client) {
-    if (g_WaitingOnRoundAllow[client]) {
-
-        g_WaitingOnRoundAllow[client] = false;
-        int roundType = g_CurrentRoundTypeMenuIndex[client];
-
-        if (g_AllowedRoundTypes[client][roundType]) {
-            Handle pluginSource = g_RoundTypeSourcePlugin[roundType];
-            RoundTypeMenuHandler menuHandler = g_RoundTypeMenuHandlers[roundType];
-            Call_StartFunction(pluginSource, menuHandler);
-            Call_PushCell(client);
-            Call_Finish();
-        } else {
-            ReturnMenuControl(client);
-        }
-
-    } else {
-        g_CurrentRoundTypeMenuIndex[client]++;
-        int roundType = g_CurrentRoundTypeMenuIndex[client];
-        if (roundType < g_numRoundTypes) {
-
-            // if optional: give the menu to choose it, otherwise: carry on back to the controller
-            // if disabled: always carry back to the controller
-            if (g_RoundTypeOptional[roundType] && g_RoundTypeEnabled[roundType]) {
-                GiveAllowMenu(client, roundType);
-                g_WaitingOnRoundAllow[client] = true;
-            } else {
-                ReturnMenuControl(client);
-                g_WaitingOnRoundAllow[client] = false;
-            }
-
-        } else {
-            // last part of the menu:
-            GivePreferenceMenu(client);
-        }
-    }
-}
-
-public void GiveAllowMenu(int client, int roundType) {
-    Handle menu = CreateMenu(MenuHandler_AllowRoundType);
-    SetMenuExitButton(menu, true);
-    SetMenuTitle(menu, "Allow %s rounds?", g_RoundTypeDisplayNames[roundType]);
-    AddMenuBool(menu, true, "Yes");
-    AddMenuBool(menu, false, "No");
-    DisplayMenu(menu, client, MENU_TIME_LENGTH);
-}
-
-public int MenuHandler_AllowRoundType(Handle menu, MenuAction action, int param1, int param2) {
-    if (action == MenuAction_Select) {
-        int client = param1;
-        bool choice = GetMenuBool(menu, param2);
-        int roundType = g_CurrentRoundTypeMenuIndex[client];
-        g_AllowedRoundTypes[client][roundType] = choice;
-        char cookieName[128];
-        GetRoundCookieName(roundType, cookieName, sizeof(cookieName));
-        SetCookieBoolByName(client, cookieName, choice);
-        ReturnMenuControl(client);
-    } else if (action == MenuAction_End) {
-        CloseHandle(menu);
-    }
-}
-
-static void GetRoundCookieName(int roundType, char[] buffer, int length) {
+public void GetRoundCookieName(int roundType, char[] buffer, int length) {
     Format(buffer, length, "multi1v1_allow%s", g_RoundTypeNames[roundType]);
 }
-
-
 
 /*************************
  *                       *
@@ -162,9 +104,9 @@ static void GetRoundCookieName(int roundType, char[] buffer, int length) {
  *************************/
 
 public void AddStandardRounds() {
-    AddRoundType(INVALID_HANDLE, "Rifle", "rifle", RifleHandler, Multi1v1_NullChoiceMenu, false, true, "rifleRating", true);
-    AddRoundType(INVALID_HANDLE, "Pistol", "pistol", PistolHandler, Multi1v1_NullChoiceMenu, true, true, "pistolRating", true);
-    AddRoundType(INVALID_HANDLE, "AWP", "awp", AwpHandler, Multi1v1_NullChoiceMenu, true, true, "awpRating", true);
+    AddRoundType(INVALID_HANDLE, "Rifle", "rifle", RifleHandler, false, true, "rifleRating", true);
+    AddRoundType(INVALID_HANDLE, "Pistol", "pistol", PistolHandler, true, true, "pistolRating", true);
+    AddRoundType(INVALID_HANDLE, "AWP", "awp", AwpHandler, true, true, "awpRating", true);
 }
 
 public void RifleHandler(int client) {
@@ -172,10 +114,16 @@ public void RifleHandler(int client) {
     Client_SetHelmet(client, true);
     Client_SetArmor(client, 100);
 
-    int pistolBehavior = g_hPistolBehavior.IntValue;
-    if (pistolBehavior != 1) {
+    int pistolBehavior = g_PistolBehaviorCvar.IntValue;
+    if (pistolBehavior == 0 || pistolBehavior == 3) {
         GiveWeapon(client, g_SecondaryWeapon[client]);
+    } else if (pistolBehavior == 2) {
+        char defaultPistol[WEAPON_NAME_LENGTH];
+        g_DefaultPistolCvar.GetString(defaultPistol, sizeof(defaultPistol));
+        GiveWeapon(client,  defaultPistol);
     }
+
+    GivePlayerItem(client, "weapon_knife");
 }
 
 public void PistolHandler(int client) {
@@ -187,18 +135,20 @@ public void PistolHandler(int client) {
     } else {
         Client_SetArmor(client, 0);
     }
+    GivePlayerItem(client, "weapon_knife");
 }
 
 public void AwpHandler(int client) {
     GiveWeapon(client, "weapon_awp");
     Client_SetHelmet(client, true);
 
-    int pistolBehavior = g_hPistolBehavior.IntValue;
+    int pistolBehavior = g_PistolBehaviorCvar.IntValue;
     if (pistolBehavior == 0) {
         GiveWeapon(client, g_SecondaryWeapon[client]);
     } else if (pistolBehavior == 2 || pistolBehavior == 3) {
-        char defaultPistol[32];
-        g_hDefaultPistol.GetString(defaultPistol, sizeof(defaultPistol));
+        char defaultPistol[WEAPON_NAME_LENGTH];
+        g_DefaultPistolCvar.GetString(defaultPistol, sizeof(defaultPistol));
         GiveWeapon(client,  defaultPistol);
     }
+    GivePlayerItem(client, "weapon_knife");
 }

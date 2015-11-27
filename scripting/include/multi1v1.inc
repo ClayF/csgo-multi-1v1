@@ -1,9 +1,11 @@
+
 #if defined _multi1v1_included
   #endinput
 #endif
 #define _multi1v1_included
 
 #define WEAPON_NAME_LENGTH 32
+#define MAX_ROUND_TYPES 32
 
 /**
  * Called right before the plugin puts players into the ranking queue.
@@ -39,8 +41,8 @@ forward void Multi1v1_OnArenasReady();
 forward void Multi1v1_AfterPlayerSpawn(int client);
 
 /**
- * Called after core player setup functions (teleporting, printing their opponent to chat)
- * are processed.
+ * Called after core player setup functions (teleporting, printing their opponent to chat, giving weapons)
+ * are completed.
  *
  * @param client Player's index.
  * @noreturn
@@ -67,11 +69,21 @@ forward void Multi1v1_OnStatsCached(int client);
 
 /**
  * Called after a player finishes going through the weapons menu.
+ * Note that the info strings used by the weapons menu are
+ * "rifle", "pistol", "pref", and "allowx" (where x is an integer),
+ * so you should avoid adding these into the menu.
  *
  * @param client Player's index.
+ * @param menu Menu being displayed to the client.
  * @noreturn
  */
-forward void Multi1v1_OnGunsMenuDone(int client);
+forward void Multi1v1_OnGunsMenuCreated(int client, Menu menu);
+
+/**
+ * Called directly by the guns menu callback.
+ * @noreturn
+ */
+forward void Multi1v1_GunsMenuCallback(Menu menu, MenuAction action, int param1, int param2);
 
 /**
  * Called each map start after the standard round types have been added.
@@ -320,6 +332,16 @@ native int Multi1v1_GetNumSpawnsInArena(int arena);
 native void Multi1v1_GetArenaSpawn(int arena, int team, float origin[3], float angle[3]);
 
 /**
+ * Finds the arena number of a position. This may be inaccurate if the
+ * given position isn't actually inside any arena as it uses the spawns
+ * to determine the closest arena.
+ * Note: arena numbers are ordered between [1, Multi1v1_GetMaximumArenas()]
+ *
+ * @param origin Position vector.
+ */
+native int Multi1v1_FindArenaNumber(const float origin[3]);
+
+/**
  * Gets the rifle the client has selected in the weapons menu.
  *
  * @param client Client index.
@@ -358,7 +380,6 @@ typedef RoundTypeMenuHandler = function void (int client);
 native int Multi1v1_AddRoundType(const char[] displayName,
                                  const char[] internalName,
                                  RoundTypeWeaponHandler weaponsHandler=Multi1v1_NullWeaponHandler,
-                                 RoundTypeMenuHandler menuHandler=Multi1v1_NullChoiceMenu,
                                  bool optional=true,
                                  bool ranked=false,
                                  const char[] ratingFieldName="",
@@ -383,23 +404,8 @@ native void Multi1v1_AddStandardRounds();
  */
 native int Multi1v1_GetRoundTypeIndex(const char[] internalName);
 
-/**
- * Returns menu control to the menu controller.
- * This is intended to be called from within a RoundTypeMenuHandler in the guns menu
- * once a client has picked an option.
- *
- * @error Client not connected.
- * @noreturn
- */
-native void Multi1v1_ReturnMenuControl(int client);
-
 // Helper null callback for round types that don't need to give players weapons on spawn.
 public void Multi1v1_NullWeaponHandler(int client) {
-}
-
-// Helper null callback for round types that don't need a special menu created.
-public void Multi1v1_NullChoiceMenu(int client) {
-    Multi1v1_ReturnMenuControl(client);
 }
 
 native bool Multi1v1_IsRoundTypeEnabled(int roundType);
@@ -440,6 +446,10 @@ native int Multi1v1_PlayerPreference(int client);
  */
 native bool Multi1v1_IsHidingStats(int client);
 
+/**
+ * Gives a player the guns menu.
+ */
+native void Multi1v1_GiveWeaponsMenu(int client, int pos=0);
 
 public SharedPlugin:__pl_multi1v1 = {
     name = "multi1v1",
@@ -483,11 +493,11 @@ public __pl_multi1v1_SetNTVOptional() {
     MarkNativeAsOptional("Multi1v1_ELORatingDelta");
     MarkNativeAsOptional("Multi1v1_GetNumSpawnsInArena");
     MarkNativeAsOptional("Multi1v1_GetArenaSpawn");
+    MarkNativeAsOptional("Multi1v1_FindArenaNumber");
     MarkNativeAsOptional("Multi1v1_GetRifleChoice");
     MarkNativeAsOptional("Multi1v1_GetPistolChoice");
     MarkNativeAsOptional("Multi1v1_AddRoundType");
     MarkNativeAsOptional("Multi1v1_ClearRoundTypes");
-    MarkNativeAsOptional("Multi1v1_ReturnMenuControl");
     MarkNativeAsOptional("Multi1v1_GetRoundTypeIndex");
     MarkNativeAsOptional("Multi1v1_AddStandardRounds");
     MarkNativeAsOptional("Multi1v1_GetCurrentRoundType");
@@ -498,5 +508,6 @@ public __pl_multi1v1_SetNTVOptional() {
     MarkNativeAsOptional("Multi1v1_IsRoundTypeEnabled");
     MarkNativeAsOptional("Multi1v1_EnableRoundType");
     MarkNativeAsOptional("Multi1v1_DisableRoundType");
+    MarkNativeAsOptional("Multi1v1_GiveWeaponsMenu");
 }
 #endif

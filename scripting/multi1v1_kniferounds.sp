@@ -1,3 +1,9 @@
+/**
+ * This plugin is intended to provide a simple example of how to add round types via the natives provided.
+ * If you really only wanted knife rounds, it would be simpler to only modify the configs/multi1v1_customrounds.cfg
+ * file.
+ */
+
 #include <sourcemod>
 #include <smlib>
 #include "include/multi1v1.inc"
@@ -15,9 +21,10 @@ public Plugin myinfo = {
 };
 
 public void Multi1v1_OnRoundTypesAdded() {
-    Multi1v1_AddRoundType("Knife", "knife", KnifeHandler, Multi1v1_NullChoiceMenu, true, false, "", true);
+    Multi1v1_AddRoundType("Knife", "knife", KnifeHandler, true, false, "", true);
 }
 
 public void KnifeHandler(int client) {
     Client_SetArmor(client, 100);
+    GivePlayerItem(client, "weapon_knife");
 }

@@ -1,4 +1,4 @@
-#define UPDATE_URL "https://dl.dropboxusercontent.com/u/76035852/multi1v1-v1.x/csgo-multi-1v1.txt"
+#define UPDATE_URL "https://dl.dropboxusercontent.com/u/76035852/multi1v1-v1.1.x/csgo-multi-1v1.txt"
 
 #include <sourcemod>
 #include <sdkhooks>
@@ -27,9 +27,8 @@
 
 #define DISTRIBUTION_SPREAD 1000.0
 #define K_FACTOR 8.0
-#define MAX_ROUND_TYPES 16
-#define MENU_TIME_LENGTH 15
 #define ROUND_TYPE_NAME_LENGTH 64
+#define DATABASE_CONFIG_NAME "multi1v1"
 #define TABLE_NAME "multi1v1_stats"
 #define WEAPON_LENGTH 32
 
@@ -37,26 +36,26 @@
 ConVar g_EnabledCvar;
 bool g_Enabled = true;
 
-ConVar g_hAutoGunsMenuBehavior;
-ConVar g_hAutoUpdate;
-ConVar g_hBlockRadio;
-ConVar g_hDatabaseName;
-ConVar g_hDatabaseServerId;
-ConVar g_hDefaultPistol;
-ConVar g_hExecDefaultConfig;
-ConVar g_hHideGunsChatCommands;
-ConVar g_hPistolBehavior;
-ConVar g_hPistolMenu;
-ConVar g_hPreferenceWeight;
-ConVar g_hRifleMenu;
-ConVar g_hRoundTime;
-ConVar g_hSupport3rdPartyKnife;
-ConVar g_hUseChatPrefix;
-ConVar g_hUseDatabase;
-ConVar g_hUseMVPStars;
-ConVar g_hUseTeamTags;
-ConVar g_hVerboseSpawnModes;
-ConVar g_hVersion;
+ConVar g_AutoGunsMenuBehaviorCvar;
+ConVar g_AutoUpdateCvar;
+ConVar g_BlockRadioCvar;
+ConVar g_DatabaseServerIdCvar;
+ConVar g_DefaultPistolCvar;
+ConVar g_ExecDefaultConfigCvar;
+ConVar g_HideGunsChatCommandsCvar;
+ConVar g_MuteOtherArenasCvar;
+ConVar g_PistolBehaviorCvar;
+ConVar g_PistolMenuCvar;
+ConVar g_PreferenceWeightCvar;
+ConVar g_RifleMenuCvar;
+ConVar g_RoundTimeCvar;
+ConVar g_UseAssistsCvar;
+ConVar g_UseChatPrefixCvar;
+ConVar g_UseDatabaseCvar;
+ConVar g_UseMVPStarsCvar;
+ConVar g_UseTeamTagsCvar;
+ConVar g_VerboseSpawnModeCvar;
+ConVar g_VersionCvar;
 
 /** Saved data for database interaction - be careful when using these, they may not
  *  be fetched, check multi1v1/stats.sp for a function that checks that instead of
@@ -69,8 +68,7 @@ float g_Rating[MAXPLAYERS+1];
 float g_RoundTypeRating[MAXPLAYERS+1][MAX_ROUND_TYPES];
 
 /** Database interactions **/
-bool g_dbConnected = false;
-Handle db = INVALID_HANDLE;
+Database db = null;
 
 /** Client arrays **/
 int g_Ranking[MAXPLAYERS+1]; // which arena each player is in
@@ -79,10 +77,9 @@ bool g_PluginTeamSwitch[MAXPLAYERS+1];  // Flags the teamswitches as being done 
 bool g_GivenGunsMenu[MAXPLAYERS+1];
 bool g_HideStats[MAXPLAYERS+1];
 
-Handle g_SavedCvars = INVALID_HANDLE;
+Handle g_HideStatsCookie;
 
-bool g_WaitingOnRoundAllow[MAXPLAYERS+1];
-int g_CurrentRoundTypeMenuIndex[MAXPLAYERS+1];
+Handle g_SavedCvars = INVALID_HANDLE;
 
 int g_Preference[MAXPLAYERS+1];
 char g_PrimaryWeapon[MAXPLAYERS+1][WEAPON_LENGTH];
@@ -97,7 +94,6 @@ int g_numRoundTypes = 0;
 char g_RoundTypeNames[MAX_ROUND_TYPES][ROUND_TYPE_NAME_LENGTH];
 char g_RoundTypeDisplayNames[MAX_ROUND_TYPES][ROUND_TYPE_NAME_LENGTH];
 RoundTypeWeaponHandler g_RoundTypeWeaponHandlers[MAX_ROUND_TYPES];
-RoundTypeMenuHandler g_RoundTypeMenuHandlers[MAX_ROUND_TYPES];
 bool g_RoundTypeRanked[MAX_ROUND_TYPES];
 bool g_RoundTypeOptional[MAX_ROUND_TYPES];
 bool g_RoundTypeEnabled[MAX_ROUND_TYPES];
@@ -114,6 +110,11 @@ int g_ArenaLosers[MAXPLAYERS+1] = -1;   // who lost each arena
 int g_roundTypes[MAXPLAYERS+1];         // the round type being used in the arena
 int g_RoundsLeader[MAXPLAYERS+1] = 0;
 
+/** Variables for custom-configurable round types **/
+ArrayList g_RoundTypeWeaponLists[MAX_ROUND_TYPES];
+bool g_RoundTypeKevlar[MAX_ROUND_TYPES];
+bool g_RoundTypeHelmet[MAX_ROUND_TYPES];
+
 /** Overall global variables **/
 int g_arenaOffsetValue = 0;
 int g_roundStartTime = 0;
@@ -124,16 +125,31 @@ bool g_roundFinished = false;
 Handle g_waitingQueue = INVALID_HANDLE;
 
 /** Handles to arrays of vectors of spawns/angles **/
-Handle g_hTSpawns = INVALID_HANDLE;
-Handle g_hTAngles = INVALID_HANDLE;
-Handle g_hCTSpawns = INVALID_HANDLE;
-Handle g_hCTAngles = INVALID_HANDLE;
+ArrayList g_TSpawnsList;
+ArrayList g_TAnglesList;
+ArrayList g_CTSpawnsList;
+ArrayList g_CTAnglesList;
+
+/** Saved stock cvar handles **/
+ConVar g_FreezetimeCvar;
+ConVar g_RoundRestartDelayCvar;
+
+// Stored data from the weapons config file.
+// Each array has 3 elements:
+//  0: game's name of the weapon (e.g. "weapon_ak47")
+//  1: player-readable name of the weapon (e.g. "AK47")
+//  2: team the weapon belongs to (e.g. "T", "CT", or "ANY")
+#define WEAPON_MAX 16
+int g_numRifles;
+char g_Rifles[WEAPON_MAX][3][WEAPON_NAME_LENGTH];
+int g_numPistols;
+char g_Pistols[WEAPON_MAX][3][WEAPON_NAME_LENGTH];
 
 /** Forwards **/
 Handle g_hAfterPlayerSetup = INVALID_HANDLE;
 Handle g_hAfterPlayerSpawn = INVALID_HANDLE;
+Handle g_hGunsMenuCallback = INVALID_HANDLE;
 Handle g_hOnArenasReady = INVALID_HANDLE;
-Handle g_hOnGunsMenuDone = INVALID_HANDLE;
 Handle g_hOnPostArenaRankingsSet = INVALID_HANDLE;
 Handle g_hOnPreArenaRankingsSet = INVALID_HANDLE;
 Handle g_hOnRoundTypeDecided = INVALID_HANDLE;
@@ -141,16 +157,20 @@ Handle g_hOnRoundTypesAdded = INVALID_HANDLE;
 Handle g_hOnRoundWon = INVALID_HANDLE;
 Handle g_hOnSpawnsFound = INVALID_HANDLE;
 Handle g_hOnStatsCached = INVALID_HANDLE;
+Handle g_hOnGunsMenuCreated = INVALID_HANDLE;
 
 /** multi1v1 function includes **/
 #include "multi1v1/generic.sp"
+#include "multi1v1/customrounds.sp"
+#include "multi1v1/mute.sp"
 #include "multi1v1/natives.sp"
 #include "multi1v1/radiocommands.sp"
 #include "multi1v1/roundtypes.sp"
 #include "multi1v1/spawns.sp"
 #include "multi1v1/stats.sp"
-#include "multi1v1/weaponlogic.sp"
 #include "multi1v1/version.sp"
+#include "multi1v1/weaponlogic.sp"
+#include "multi1v1/menus.sp"
 
 
 
@@ -176,25 +196,25 @@ public void OnPluginStart() {
     /** ConVars **/
     g_EnabledCvar = CreateConVar("sm_multi1v1_enabled", "1", "Whether the multi1v1 gamemode is enabled or not");
 
-    g_hAutoGunsMenuBehavior = CreateConVar("sm_multi1v1_menu_open_behavior", "0", "Determines auto-open behavior of the guns menu. 0=never auto-open, 1=open if the client has no preference cookies saved, 2=always open on client connect");
-    g_hAutoUpdate = CreateConVar("sm_multi1v1_autoupdate", "0", "Whether the plugin attempts to auto-update. Requies the \"Updater\" plugin");
-    g_hBlockRadio = CreateConVar("sm_multi1v1_block_radio", "1", "Should the plugin block radio commands from being broadcasted");
-    g_hDatabaseName = CreateConVar("sm_multi1v1_db_name", "multi1v1", "Name of the database configuration in configs/databases.cfg to use.");
-    g_hDatabaseServerId = CreateConVar("sm_multi1v1_database_server_id", "0", "If you are storing database stats, a number to identify this server. Most users don't need to change this but if you are using the web interface and/or want to show/store stats for multiple servers, it should.");
-    g_hDefaultPistol = CreateConVar("sm_multi1v1_default_pistol", "weapon_p250", "Default pistol to give if sm_multi1v1_pistol_behavior=2");
-    g_hExecDefaultConfig = CreateConVar("sm_multi1v1_exec_default_config", "1", "Whether the plugin will exectue gamemode_competitive.cfg before the sourcemod/multi1v1/game_cvars.cfg file.");
-    g_hHideGunsChatCommands = CreateConVar("sm_multi1v1_block_guns_chat_commands", "1", "Whether commands like \"guns\" or \"!guns\" will be blocked from showing up in chat.");
-    g_hPistolBehavior = CreateConVar("sm_multi1v1_pistol_behavior", "0", "Behavior 0=always give the pistol the player selected, 1=never give pistols on non-pistol rounds, 2=always give sm_multi1v1_default_pistol on non-pistol rounds 3=give pistol choice on rifle/pistol rounds, but use sm_multi1v1_default_pistol on awp rounds");
-    g_hPistolMenu = CreateConVar("sm_multi1v1_show_pistol_menu", "1", "Whether the pistol choice menu should be included in the guns menu");
-    g_hPreferenceWeight = CreateConVar("sm_multi1v1_preference_weight", "1", "How much weight are given to preferences when round types are being selected. Use a higher number for a preference to be more likely, or 0 to make the preference have no effect");
-    g_hRifleMenu = CreateConVar("sm_multi1v1_show_rifle_menu", "1", "Whether the rifle choice menu should be included in the guns menu");
-    g_hRoundTime = CreateConVar("sm_multi1v1_roundtime", "30", "Roundtime (in seconds)", _, true, 5.0);
-    g_hSupport3rdPartyKnife = CreateConVar("sm_multi1v1_support_3rdparty", "Should the plugin support 3rd party knives");
-    g_hUseChatPrefix = CreateConVar("sm_multi1v1_use_chat_prefix", "1", "Whether to use a [Multi1v1] tag in chat messages");
-    g_hUseDatabase = CreateConVar("sm_multi1v1_use_database", "0", "Whether a database is used to store player statistics");
-    g_hUseMVPStars = CreateConVar("sm_multi1v1_use_mvp_stars", "1", "Whether MVP stars are updated to reflect a player's number of rounds in arena 1");
-    g_hUseTeamTags = CreateConVar("sm_multi1v1_use_team_tags", "1", "Whether the team (or clan) tag is updated to reflect a player's arena numbers");
-    g_hVerboseSpawnModes = CreateConVar("sm_multi1v1_verbose_spawns", "0", "Set to 1 to get info about all spawns the plugin read - useful for map creators testing against the plugin");
+    g_AutoGunsMenuBehaviorCvar = CreateConVar("sm_multi1v1_menu_open_behavior", "0", "Determines auto-open behavior of the guns menu. 0=never auto-open, 1=open if the client has no preference cookies saved, 2=always open on client connect");
+    g_AutoUpdateCvar = CreateConVar("sm_multi1v1_autoupdate", "0", "Whether the plugin attempts to auto-update. Requies the \"Updater\" plugin");
+    g_BlockRadioCvar = CreateConVar("sm_multi1v1_block_radio", "1", "Should the plugin block radio commands from being broadcasted");
+    g_DatabaseServerIdCvar = CreateConVar("sm_multi1v1_database_server_id", "0", "If you are storing database stats, a number to identify this server. Most users don't need to change this but if you are using the web interface and/or want to show/store stats for multiple servers separately, it should.");
+    g_DefaultPistolCvar = CreateConVar("sm_multi1v1_default_pistol", "weapon_p250", "Default pistol to give if sm_multi1v1_pistol_behavior=2");
+    g_ExecDefaultConfigCvar = CreateConVar("sm_multi1v1_exec_default_config", "1", "Whether the plugin will exectue gamemode_competitive.cfg before the sourcemod/multi1v1/game_cvars.cfg file.");
+    g_HideGunsChatCommandsCvar = CreateConVar("sm_multi1v1_block_guns_chat_commands", "1", "Whether commands like \"guns\" or \"!guns\" will be blocked from showing up in chat.");
+    g_MuteOtherArenasCvar = CreateConVar("sm_multi1v1_mute_other_arenas", "1", "Whether bullet shots from other arenas are muted");
+    g_PistolBehaviorCvar = CreateConVar("sm_multi1v1_pistol_behavior", "0", "Behavior 0=always give the pistol the player selected, 1=never give pistols on non-pistol rounds, 2=always give sm_multi1v1_default_pistol on non-pistol rounds 3=give pistol choice on rifle/pistol rounds, but use sm_multi1v1_default_pistol on awp rounds");
+    g_PistolMenuCvar = CreateConVar("sm_multi1v1_show_pistol_menu", "1", "Whether the pistol choice menu should be included in the guns menu");
+    g_PreferenceWeightCvar = CreateConVar("sm_multi1v1_preference_weight", "1", "How much weight are given to preferences when round types are being selected. Use a higher number for a preference to be more likely, or 0 to make the preference have no effect");
+    g_RifleMenuCvar = CreateConVar("sm_multi1v1_show_rifle_menu", "1", "Whether the rifle choice menu should be included in the guns menu");
+    g_RoundTimeCvar = CreateConVar("sm_multi1v1_roundtime", "30", "Roundtime (in seconds)", _, true, 5.0);
+    g_UseAssistsCvar = CreateConVar("sm_multi1v1_use_assists", "0", "Whether assists are updated to reflect a player's number of rounds in arena 1");
+    g_UseChatPrefixCvar = CreateConVar("sm_multi1v1_use_chat_prefix", "1", "Whether to use a [Multi1v1] tag in chat messages");
+    g_UseDatabaseCvar = CreateConVar("sm_multi1v1_use_database", "1", "Whether a database is used to store player statistics");
+    g_UseMVPStarsCvar = CreateConVar("sm_multi1v1_use_mvp_stars", "1", "Whether MVP stars are updated to reflect a player's number of rounds in arena 1");
+    g_UseTeamTagsCvar = CreateConVar("sm_multi1v1_use_team_tags", "1", "Whether the team (or clan) tag is updated to reflect a player's arena numbers");
+    g_VerboseSpawnModeCvar = CreateConVar("sm_multi1v1_verbose_spawns", "0", "Set to 1 to get info about all spawns the plugin read - useful for map creators testing against the plugin");
 
     HookConVarChange(g_EnabledCvar, EnabledChanged);
 
@@ -202,8 +222,13 @@ public void OnPluginStart() {
     AutoExecConfig(true, "multi1v1", "sourcemod/multi1v1");
 
     /** Version cvar **/
-    g_hVersion = CreateConVar("sm_multi1v1_version", PLUGIN_VERSION, "Current multi1v1 version", FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_NOTIFY|FCVAR_DONTRECORD);
-    SetConVarString(g_hVersion, PLUGIN_VERSION);
+    g_VersionCvar = CreateConVar("sm_multi1v1_version", PLUGIN_VERSION, "Current multi1v1 version", FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_NOTIFY|FCVAR_DONTRECORD);
+    SetConVarString(g_VersionCvar, PLUGIN_VERSION);
+
+    /** Find default game cvars **/
+    g_FreezetimeCvar = FindCvarAndLogError("mp_freezetime");
+    g_RoundRestartDelayCvar = FindCvarAndLogError("mp_round_restart_delay");
+
 
     /** Hooks **/
     HookEvent("player_team", Event_OnPlayerTeam, EventHookMode_Pre);
@@ -214,18 +239,20 @@ public void OnPluginStart() {
     HookEvent("round_poststart", Event_OnRoundPostStart);
     HookEvent("round_end", Event_OnRoundEnd);
     HookEvent("cs_win_panel_match", Event_MatchOver);
+    AddTempEntHook("Shotgun Shot", Hook_ShotgunShot);
 
     /** Commands **/
     AddCommandListener(Command_JoinTeam, "jointeam");
     AddRadioCommandListeners();
     RegConsoleCmd("sm_guns", Command_Guns, "Displays gun/round selection menu");
     RegConsoleCmd("sm_hidestats", Command_Hidestats, "Hides player stats/ratings");
+    RegAdminCmd("sm_reloadroundtypes", Command_ReloadRoundTypes, ADMFLAG_CHANGEMAP, "Reloads multi1v1 round types");
 
     /** Fowards **/
     g_hAfterPlayerSetup = CreateGlobalForward("Multi1v1_AfterPlayerSetup", ET_Ignore, Param_Cell);
     g_hAfterPlayerSpawn = CreateGlobalForward("Multi1v1_AfterPlayerSpawn", ET_Ignore, Param_Cell);
+    g_hGunsMenuCallback = CreateGlobalForward("Multi1v1_GunsMenuCallback", ET_Ignore, Param_Cell, Param_Cell, Param_Cell, Param_Cell);
     g_hOnArenasReady = CreateGlobalForward("Multi1v1_OnArenasReady", ET_Ignore);
-    g_hOnGunsMenuDone = CreateGlobalForward("Multi1v1_OnGunsMenuDone", ET_Ignore, Param_Cell);
     g_hOnPostArenaRankingsSet = CreateGlobalForward("Multi1v1_OnPostArenaRankingsSet", ET_Ignore, Param_Cell);
     g_hOnPreArenaRankingsSet = CreateGlobalForward("Multi1v1_OnPreArenaRankingsSet", ET_Ignore, Param_Cell);
     g_hOnRoundTypeDecided = CreateGlobalForward("Multi1v1_OnRoundTypeDecided", ET_Ignore, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
@@ -233,15 +260,22 @@ public void OnPluginStart() {
     g_hOnRoundWon = CreateGlobalForward("Multi1v1_OnRoundWon", ET_Ignore, Param_Cell, Param_Cell, Param_Cell);
     g_hOnSpawnsFound = CreateGlobalForward("Multi1v1_OnSpawnsFound", ET_Ignore, Param_Cell, Param_Cell, Param_Cell, Param_Cell);
     g_hOnStatsCached = CreateGlobalForward("Multi1v1_OnStatsCached", ET_Ignore, Param_Cell);
+    g_hOnGunsMenuCreated = CreateGlobalForward("Multi1v1_OnGunsMenuCreated", ET_Ignore, Param_Cell, Param_Cell);
 
     g_waitingQueue = Queue_Init();
 
-    if (g_hAutoUpdate.IntValue != 0) {
+    for (int i = 0; i < sizeof(g_RoundTypeWeaponLists); i++) {
+        g_RoundTypeWeaponLists[i] = new ArrayList(WEAPON_NAME_LENGTH);
+    }
+
+    if (g_AutoUpdateCvar.IntValue != 0) {
         AddUpdater();
     }
+
+    g_HideStatsCookie = RegClientCookie("multi1v1_hidestats", "Whether multi1v1 stats are hidden", CookieAccess_Public);
 }
 
-public int EnabledChanged(Handle cvar, const char[] oldValue, const char[] newValue) {
+public int EnabledChanged(ConVar cvar, const char[] oldValue, const char[] newValue) {
     bool wasEnabled = !StrEqual(oldValue, "0");
     g_Enabled = !StrEqual(newValue, "0");
 
@@ -253,10 +287,10 @@ public int EnabledChanged(Handle cvar, const char[] oldValue, const char[] newVa
             if (!IsPlayer(i))
                 continue;
 
-            if (g_hUseTeamTags.IntValue != 0)
+            if (g_UseTeamTagsCvar.IntValue != 0)
                 CS_SetClientClanTag(i, "");
 
-            if (g_hUseMVPStars.IntValue != 0)
+            if (g_UseMVPStarsCvar.IntValue != 0)
                 CS_SetMVPCount(i, 0);
 
             CS_SetClientContributionScore(i, 0);
@@ -280,7 +314,7 @@ public int EnabledChanged(Handle cvar, const char[] oldValue, const char[] newVa
 }
 
 public void OnLibraryAdded(const char[] name) {
-    if (g_hAutoUpdate.IntValue != 0) {
+    if (g_AutoUpdateCvar.IntValue != 0) {
         AddUpdater();
     }
 }
@@ -291,33 +325,10 @@ static void AddUpdater() {
     }
 }
 
-// Patch support for klexen's sm_knifeugrade plugin
-public void ForceKnifeSupportVars() {
-    Handle sm_knifeupgrade_goldknife_crash = FindConVar("sm_knifeupgrade_goldknife_crash");
-    if (sm_knifeupgrade_goldknife_crash != INVALID_HANDLE && GetConVarBool(sm_knifeupgrade_goldknife_crash))
-        SetConVarBool(sm_knifeupgrade_goldknife_crash, false);
-
-    Handle sm_knifeupgrade_round_crash = FindConVar("sm_knifeupgrade_round_crash");
-    if (sm_knifeupgrade_round_crash != INVALID_HANDLE && GetConVarBool(sm_knifeupgrade_round_crash))
-        SetConVarBool(sm_knifeupgrade_round_crash, false);
-}
-
-public void OnConfigsExecuted() {
-    if (g_hSupport3rdPartyKnife.IntValue != 0)
-        ForceKnifeSupportVars();
-}
-
 public void OnMapStart() {
-    if (g_hSupport3rdPartyKnife.IntValue != 0)
-        ForceKnifeSupportVars();
-
     Spawns_MapStart();
     Weapons_MapStart();
-
-    Multi1v1_ClearRoundTypes();
-    Multi1v1_AddStandardRounds();
-    Call_StartForward(g_hOnRoundTypesAdded);
-    Call_Finish();
+    LoadRoundTypes();
 
     Queue_Clear(g_waitingQueue);
 
@@ -332,12 +343,13 @@ public void OnMapStart() {
         g_ArenaLosers[i] = -1;
     }
 
-    if (!g_dbConnected && g_hUseDatabase.IntValue != 0) {
+    if (db == null && AreStatsEnabled()) {
         DB_Connect();
     }
 
-    if (g_Enabled)
+    if (g_Enabled) {
         ExecConfigs();
+    }
 }
 
 public void OnMapEnd() {
@@ -345,7 +357,7 @@ public void OnMapEnd() {
 }
 
 public void ExecConfigs() {
-    if (g_hExecDefaultConfig.IntValue != 0) {
+    if (g_ExecDefaultConfigCvar.IntValue != 0) {
         ServerCommand("exec gamemode_competitive.cfg");
     }
 
@@ -357,7 +369,7 @@ public void ExecConfigs() {
 }
 
 public void OnClientAuthorized(int client, const char[] auth) {
-    if (!StrEqual(auth, "BOT") && g_hUseDatabase.IntValue != 0 && g_dbConnected) {
+    if (!StrEqual(auth, "BOT") && g_UseDatabaseCvar.IntValue != 0 && db != null) {
         DB_AddPlayer(client);
     }
 }
@@ -367,7 +379,7 @@ public void OnClientConnected(int client) {
 }
 
 public void OnClientDisconnect(int client) {
-    if (g_hUseDatabase.IntValue != 0)
+    if (g_UseDatabaseCvar.IntValue != 0)
         DB_WriteRatings(client);
 
     Queue_Drop(g_waitingQueue, client);
@@ -376,7 +388,7 @@ public void OnClientDisconnect(int client) {
     ResetClientVariables(client);
 }
 
-public int OnClientCookiesCached(int client) {
+public void OnClientCookiesCached(int client) {
     if (IsFakeClient(client))
         return;
     UpdatePreferencesOnCookies(client);
@@ -396,18 +408,18 @@ public int OnClientCookiesCached(int client) {
  * if a player does not select a team but leaves their mouse over one, they are
  * put on that team and spawned, so we can't allow that.
  */
-public Action Event_OnFullConnect(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_OnFullConnect(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return;
 
-    int client = GetClientOfUserId(GetEventInt(event, "userid"));
+    int client = GetClientOfUserId(event.GetInt("userid"));
     SetEntPropFloat(client, Prop_Send, "m_fForceTeam", 3600.0);
 }
 
 /**
  * Silences team join/switch events.
  */
-public Action Event_OnPlayerTeam(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_OnPlayerTeam(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return Plugin_Continue;
 
@@ -418,7 +430,7 @@ public Action Event_OnPlayerTeam(Handle event, const char[] name, bool dontBroad
 /**
  * Round pre-start, sets up who goes in which arena for this round.
  */
-public Action Event_OnRoundPreStart(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_OnRoundPreStart(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return;
 
@@ -563,7 +575,7 @@ public void AddPlayer(int client, Handle rankingQueue) {
 /**
  * Round poststart - puts players in their arena and gives them weapons.
  */
-public Action Event_OnRoundPostStart(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_OnRoundPostStart(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return;
 
@@ -593,14 +605,14 @@ public Action Event_OnRoundPostStart(Handle event, const char[] name, bool dontB
     }
 
     // round time is bu a special cvar since mp_roundtime has a lower bound of 1 minutes
-    GameRules_SetProp("m_iRoundTime", g_hRoundTime.IntValue, 4, 0, true);
+    GameRules_SetProp("m_iRoundTime", g_RoundTimeCvar.IntValue, 4, 0, true);
 
     // Fetch all the ratings
     // it can be expensive, so we try to get them all during freeze time where it isn't much of an issue
-    if (g_hUseDatabase.IntValue != 0) {
-        if (!g_dbConnected)
+    if (AreStatsEnabled()) {
+        if (db == null)
             DB_Connect();
-        if (g_dbConnected) {
+        if (db != null) {
             for (int i = 1; i <= MaxClients; i++) {
                 if (IsValidClient(i) && !IsFakeClient(i) && !g_FetchedPlayerInfo[i]) {
                     DB_FetchRatings(i);
@@ -655,11 +667,17 @@ public void SetupPlayer(int client, int arena, int other, bool onCT) {
     char buffer[32];
     Format(buffer, sizeof(buffer), "%T", "ArenaClanTag", LANG_SERVER, arena - g_arenaOffsetValue);
 
-    if (g_hUseTeamTags.IntValue != 0)
+    if (g_UseTeamTagsCvar.IntValue != 0)
         CS_SetClientClanTag(client, buffer);
 
-    if (g_hUseMVPStars.IntValue != 0)
+    if (g_UseMVPStarsCvar.IntValue != 0)
         CS_SetMVPCount(client, g_RoundsLeader[client]);
+
+    if (g_UseAssistsCvar.IntValue != 0)
+        CS_SetClientAssists(client, g_RoundsLeader[client]);
+
+    int roundType = (arena == -1) ? 0 : g_roundTypes[arena];
+    Multi1v1_GivePlayerArenaWeapons(client, roundType);
 
     Call_StartForward(g_hAfterPlayerSetup);
     Call_PushCell(client);
@@ -673,7 +691,7 @@ public void SetupPlayer(int client, int arena, int other, bool onCT) {
  *  - throws all the players into a queue according to their standing from this round
  *  - updates globals g_Ranking, g_ArenaPlayer1, g_ArenaPlayer2 for the next round setup
  */
-public Action Event_OnRoundEnd(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_OnRoundEnd(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return;
 
@@ -718,12 +736,12 @@ public Action Event_OnRoundEnd(Handle event, const char[] name, bool dontBroadca
 /**
  * Player death event, updates g_arenaWinners/g_arenaLosers for the arena that was just decided.
  */
-public Action Event_OnPlayerDeath(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return;
 
-    int victim = GetClientOfUserId(GetEventInt(event, "userid"));
-    int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
+    int victim = GetClientOfUserId(event.GetInt("userid"));
+    int attacker = GetClientOfUserId(event.GetInt("attacker"));
     int arena = g_Ranking[victim];
 
     // If we've already decided the arena, don't worry about anything else in it
@@ -774,24 +792,23 @@ public Action Event_OnPlayerDeath(Handle event, const char[] name, bool dontBroa
  * Player spawn event - gives the appropriate weapons to a player for his arena.
  * Warning: do NOT assume this is called before or after the round start event!
  */
-public Action Event_OnPlayerSpawn(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_OnPlayerSpawn(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return;
 
-    int client = GetClientOfUserId(GetEventInt(event, "userid"));
+    int client = GetClientOfUserId(event.GetInt("userid"));
     if (!IsActivePlayer(client))
         return;
 
     int arena = g_Ranking[client];
+
+    // Error handling if a player somehow joined a team without ever going through the queue.
     if (arena < 1) {
-        LogError("%L had arena %d on player spawn event, switching to queue/spec", client, arena);
         Queue_Enqueue(g_waitingQueue, client);
         SwitchPlayerTeam(client, CS_TEAM_SPECTATOR);
         return;
     }
 
-    int roundType = (arena == -1) ? 0 : g_roundTypes[arena];
-    Multi1v1_GivePlayerArenaWeapons(client, roundType);
     CreateTimer(0.1, RemoveRadar, client);
 
     Call_StartForward(g_hAfterPlayerSpawn);
@@ -801,7 +818,7 @@ public Action Event_OnPlayerSpawn(Handle event, const char[] name, bool dontBroa
 }
 
 
-public Action Event_MatchOver(Handle event, const char[] name, bool dontBroadcast) {
+public Action Event_MatchOver(Event event, const char[] name, bool dontBroadcast) {
     if (!g_Enabled)
         return;
 
@@ -840,10 +857,10 @@ public Action Command_JoinTeam(int client, const char[] command, int argc) {
 
     // auto-give the guns menu if desired
     if (!g_GivenGunsMenu[client]) {
-        if (g_hAutoGunsMenuBehavior.IntValue == 1 && AreClientCookiesCached(client)) {
-            GiveWeaponMenu(client);
-        } else if (g_hAutoGunsMenuBehavior.IntValue == 2) {
-            GiveWeaponMenu(client);
+        if (g_AutoGunsMenuBehaviorCvar.IntValue == 1 && AreClientCookiesCached(client)) {
+            GiveWeaponsMenu(client);
+        } else if (g_AutoGunsMenuBehaviorCvar.IntValue == 2) {
+            GiveWeaponsMenu(client);
         }
     }
 
@@ -865,7 +882,7 @@ public Action Command_JoinTeam(int client, const char[] command, int argc) {
         SwitchPlayerTeam(client, CS_TEAM_SPECTATOR);
         int arena = g_Ranking[client];
         UpdateArena(arena, client);
-        if (g_hUseTeamTags.IntValue != 0)
+        if (g_UseTeamTagsCvar.IntValue != 0)
             CS_SetClientClanTag(client, "");
 
     } else {
@@ -886,12 +903,12 @@ public Action OnClientSayCommand(int client, const char[] command, const char[] 
 
     // To avoid cluttering up chat, these commands are hidden
     char gunsChatCommands[][] = { "gun", "guns", ".gun", ".guns", ".setup", "!gun", "!guns", "gnus" };
-    bool block = (g_hHideGunsChatCommands.IntValue != 0);
+    bool block = (g_HideGunsChatCommandsCvar.IntValue != 0);
     Action ret = block ? Plugin_Handled : Plugin_Continue;
 
     for (int i = 0; i < sizeof(gunsChatCommands); i++) {
         if (strcmp(sArgs[0], gunsChatCommands[i], false) == 0) {
-            GiveWeaponMenu(client);
+            GiveWeaponsMenu(client);
             return ret;
         }
     }
@@ -903,7 +920,7 @@ public Action Command_Guns(int client, int args) {
     if (!g_Enabled)
         return Plugin_Continue;
 
-    GiveWeaponMenu(client);
+    GiveWeaponsMenu(client);
     return Plugin_Handled;
 }
 
@@ -912,6 +929,8 @@ public Action Command_Hidestats(int client, int args) {
         return Plugin_Continue;
 
     g_HideStats[client] = !g_HideStats[client];
+    SetCookieBool(client, g_HideStatsCookie, g_HideStats[client]);
+
     if (g_HideStats[client]) {
         Multi1v1_Message(client, "%t", "HideStats");
     } else {
@@ -920,6 +939,10 @@ public Action Command_Hidestats(int client, int args) {
     return Plugin_Handled;
 }
 
+public Action Command_ReloadRoundTypes(int client, int args) {
+    LoadRoundTypes();
+    return Plugin_Handled;
+}
 
 
 /*************************
@@ -1002,32 +1025,15 @@ public Action Timer_CheckRoundComplete(Handle timer) {
     bool waitingPlayers = nPlayers < 2 && Queue_Length(g_waitingQueue) > 0;
 
     // This check is a sanity check on when the round passes what the round time cvar allowed
-    Handle freezeTimeVar = FindConVar("mp_freezetime");
-    int freezeTimeLength = GetConVarInt(freezeTimeVar);
-    if (freezeTimeVar == INVALID_HANDLE) {
-        freezeTimeLength = 0;
-        LogError("Failed to get convar mp_freezetime");
-    } else {
-        freezeTimeLength = GetConVarInt(freezeTimeVar);
-    }
-
-    int maxRoundLength = g_hRoundTime.IntValue + freezeTimeLength;
+    int freezeTimeLength = g_FreezetimeCvar.IntValue;
+    int maxRoundLength = g_RoundTimeCvar.IntValue + freezeTimeLength;
     int elapsedTime =  GetTime() - g_roundStartTime;
-
     bool roundTimeExpired = elapsedTime >= maxRoundLength && nPlayers >= 2;
 
     if (normalFinish || waitingPlayers || roundTimeExpired) {
         g_roundFinished = true;
 
-        // find the delay value
-        float delay = 1.0;
-        Handle delayCvar = FindConVar("mp_round_restart_delay");
-        if (delayCvar == INVALID_HANDLE) {
-            LogError("Failed to find cvar mp_round_restart_delay");
-        } else {
-            delay = GetConVarFloat(delayCvar);
-        }
-
+        float delay = g_RoundRestartDelayCvar.FloatValue;
         CS_TerminateRound(delay, CSRoundEnd_TerroristWin);
         return Plugin_Stop;
     }

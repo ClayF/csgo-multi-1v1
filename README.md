@@ -3,7 +3,7 @@ csgo-multi-1v1
 
 [![Build status](http://ci.splewis.net/job/csgo-multi-1v1/badge/icon)](http://ci.splewis.net/job/csgo-multi-1v1/)
 
-This is home of my CS:GO [Sourcemod](sourcemod.net) multi-1v1 arena plugin. Simply put: it sets up any number of players in 1v1-situations on specially made maps and they fight in a ladder-type system. The winners move up, the losers go down.
+This is home of my CS:GO [Sourcemod](http://www.sourcemod.net) multi-1v1 arena plugin. Simply put: it sets up any number of players in 1v1-situations on specially made maps and they fight in a ladder-type system. The winners move up, the losers go down.
 
 Also see the [AlliedModders thread](https://forums.alliedmods.net/showthread.php?t=241056) and the [the wiki](https://github.com/splewis/csgo-multi-1v1/wiki) for more information.
 
@@ -89,6 +89,8 @@ You should make sure you have a relatively recent version of smlib - some change
 ## Maps
 I have a [workshop collection](http://steamcommunity.com/sharedfiles/filedetails/?id=249376192) of maps I know of. The "am_" prefix stands for aim_multi, reflecting the fact that the maps are similar to aim_ maps but there are multiple copies of them.
 
+**Note: standard maps (de_dust2, etc.) or aim maps (aim_map, etc.) will not work with this plugin. Maps must be custom-made with multiple arenas.**
+
 Guidelines for making a multi-1v1 map:
 - Create 1 arena and test it well, and when are you happy copy it
 - Create a bunch of arenas, I'd recommend making at least **16**
@@ -97,7 +99,7 @@ Guidelines for making a multi-1v1 map:
 - Ensure that the arenas are sufficiently far apart so players don't hear shooting in other arenas
 - If you want to edit your map, it's easiest to delete all but 1 arena and re-copy them. Be warned this can cause issues with the game's lighting and clients may crash the first time they load the new map if they had downloaded the old one previously
 - You should avoid areas where it's easy for 1 player to hide; ideally they should have to cover multiple angles if they sit in one spot
-- Here is an example map: [am_grass2.vmf](https://dl.dropboxusercontent.com/u/76035852/am_grass2.zip)
+- Here is an example map: [am_grass2.vmf](misc/am_grass2.vmf)
 - The cvar ``sm_multi1v1_verbose_spawns`` can be set to 1 to log information about how the spawns were partitioned into arenas on map changes
 
 
@@ -160,25 +162,66 @@ If you have a game-hosting specific provider, they may already have SQLite insta
 
 
 ## Custom Round Types
-[multi1v1.inc](scripting/include/multi1v1.inc) contains a few very useful forwards and natives for adding new round types. To get a simple example, check [multi1v1_kniferounds.sp](scripting/multi1v1_kniferounds.sp). The key is calling ``Multi1v1_AddRoundType`` within the ``Multi1v1_OnRoundTypesAdded`` forward.
 
+There are two ways to add your own round types: through writing another plugin using the forward and natives in [multi1v1.inc](scripting/include/multi1v1.inc), and
+defining a round type in a config file.
+
+### Adding round types via a config file
+
+This is the simpler approach, but you are fairly restricted in the logic you can use. The file to edit is ``addons/sourcemod/configs/multi1v1_customrounds.cfg``.
+
+Here is an example file that adds a scout round and a knife round:
 ```
+"CustomRoundTypes"
+{
+    "scout"
+    {
+        "name"      "Scout"
+        "ranked"        "1"
+        "ratingFieldName"       "scoutRating"
+        "optional"      "1"
+        "enabled"       "1"
+        "armor"     "1"
+        "helmet"        "1"
+        "weapons"
+        {
+            "weapon_knife"      ""
+            "weapon_ssg08"      ""
+        }
+    }
+    "knife"
+    {
+        "name"      "Knife"
+        "ranked"        "0"
+        "optional"      "1"
+        "enabled"       "1"
+        "armor"     "1"
+        "helmet"        "1"
+        "weapons"
+        {
+            "weapon_knife"      ""
+        }
+    }
+}
+```
+
+### Adding round types via another plugin
+
+Using the natives in [multi1v1.inc](scripting/include/multi1v1.inc), you can write more complex logic into a round type. To get a simple example, check [multi1v1_kniferounds.sp](scripting/multi1v1_kniferounds.sp). The key is calling ``Multi1v1_AddRoundType`` within the ``Multi1v1_OnRoundTypesAdded`` forward.
+
+```sourcepawn
 typedef RoundTypeWeaponHandler = function void (int client);
 typedef RoundTypeMenuHandler = function void (int client);
 
 // Registers a new round type by the plugin.
 native int Multi1v1_AddRoundType(const char[] displayName,
                                  const char[] internalName,
-                                 RoundTypeWeaponHandler weaponsHandler,
-                                 RoundTypeMenuHandler menuHandler=Multi1v1_NullChoiceMenu,
+                                 RoundTypeWeaponHandler weaponsHandler=Multi1v1_NullWeaponHandler,
                                  bool optional=true,
                                  bool ranked=false,
-                                 const char[] ratingFieldName="");
+                                 const char[] ratingFieldName="",
+                                 bool enabled=true);
 ```
-
-More advanced usage would involve passing a real function as the 4th parameter instead of ``Multi1v1_NullChoiceMenu``.
-You could pass a function, for example, that lets you choose some option that goes along with the round type.
-The menu-handler callback should call ``Multi1v1_ReturnMenuControl`` once the client has finished the selection.
 
 Note that the multi1v1 plugin will
 - create and update the column for the round-type stats if you set the round type as ranked and give a non-empty string as the ``ratingFieldName`` parameter ( note that these columns are only created on database-connections)

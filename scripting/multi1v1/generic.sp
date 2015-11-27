@@ -4,11 +4,15 @@
 #define INTEGER_STRING_LENGTH 20 // max number of digits a 64-bit integer can use up as a string
                                  // this is for converting ints to strings when setting menu values/cookies
 
-char g_ColorNames[][] = {"{NORMAL}", "{DARK_RED}", "{PURPLE}", "{GREEN}", "{MOSS_GREEN}", "{LIGHT_GREEN}", "{LIGHT_RED}", "{GRAY}", "{ORANGE}", "{LIGHT_BLUE}", "{DARK_BLUE}", "{PURPLE}", "{CARRIAGE_RETURN}"};
-char g_ColorCodes[][] =    {"\x01",     "\x02",      "\x03",   "\x04",         "\x05",     "\x06",          "\x07",        "\x08",   "\x09",     "\x0B",         "\x0C",        "\x0E",     "\n"};
+char g_ColorNames[][] = {"{NORMAL}", "{DARK_RED}", "{PURPLE}", "{GREEN}", "{MOSS_GREEN}", "{LIGHT_GREEN}", "{LIGHT_RED}", "{GRAY}", "{ORANGE}", "{LIGHT_BLUE}", "{DARK_BLUE}", "{PURPLE}"};
+char g_ColorCodes[][] =    {"\x01",     "\x02",      "\x03",   "\x04",         "\x05",     "\x06",          "\x07",        "\x08",   "\x09",     "\x0B",         "\x0C",        "\x0E"};
 
 #include <clientprefs>
 #include <cstrike>
+
+#define SPECMODE_FIRSTPERSON 4
+#define SPECMODE_THIRDPERSON 5
+#define SPECMODE_FREELOOK 6
 
 /**
  * Removes the radar element from a client's HUD.
@@ -50,18 +54,30 @@ stock bool IsActivePlayer(int client) {
 }
 
 /**
+ * Adds a formatted display string to a menu.
+ */
+stock void AddMenuOption(Menu menu, const char[] info, const char[] display, any:...) {
+    char formattedDisplay[128];
+    VFormat(formattedDisplay, sizeof(formattedDisplay), display, 4);
+    menu.AddItem(info, formattedDisplay);
+}
+
+/**
  * Adds an integer to a menu as a string choice.
  */
-stock void AddMenuInt(Handle menu, int value, const char[] display) {
+stock void AddMenuInt(Menu menu, int value, const char[] display, any:...) {
+    char formattedDisplay[128];
+    VFormat(formattedDisplay, sizeof(formattedDisplay), display, 4);
+
     char buffer[INTEGER_STRING_LENGTH];
     IntToString(value, buffer, sizeof(buffer));
-    AddMenuItem(menu, buffer, display);
+    AddMenuItem(menu, buffer, formattedDisplay);
 }
 
 /**
  * Gets an integer to a menu from a string choice.
  */
-stock int GetMenuInt(Handle menu, int param2) {
+stock int GetMenuInt(Menu menu, int param2) {
     char choice[INTEGER_STRING_LENGTH];
     GetMenuItem(menu, param2, choice, sizeof(choice));
     return StringToInt(choice);
@@ -70,7 +86,7 @@ stock int GetMenuInt(Handle menu, int param2) {
 /**
  * Adds a boolean to a menu as a string choice.
  */
-stock void AddMenuBool(Handle menu, bool value, const char[] display) {
+stock void AddMenuBool(Menu menu, bool value, const char[] display) {
     int convertedInt = value ? 1 : 0;
     AddMenuInt(menu, convertedInt, display);
 }
@@ -78,7 +94,7 @@ stock void AddMenuBool(Handle menu, bool value, const char[] display) {
 /**
  * Gets a boolean to a menu from a string choice.
  */
-stock bool GetMenuBool(Handle menu, int param2) {
+stock bool GetMenuBool(Menu menu, int param2) {
     return GetMenuInt(menu, param2) != 0;
 }
 
@@ -180,8 +196,8 @@ stock bool GetCookieBool(int client, Handle cookie) {
 /**
  * Returns a random index from an array.
  */
-stock int GetArrayRandomIndex(Handle array) {
-    int len = GetArraySize(array);
+stock int GetArrayRandomIndex(ArrayList array) {
+    int len = array.Length;
     if (len == 0)
         ThrowError("Can't get random index from empty array");
     return GetRandomInt(0, len - 1);
@@ -190,21 +206,21 @@ stock int GetArrayRandomIndex(Handle array) {
 /**
  * Pushes an element to an array multiple times.
  */
-stock void PushArrayCellReplicated(Handle array, int value, int times) {
+stock void PushArrayCellReplicated(ArrayList array, int value, int times) {
     for (int i = 0; i < times; i++)
-        PushArrayCell(array, value);
+        array.Push(value);
 }
 
 /**
  * Given an array of vectors, returns the index of the index
  * that minimizes the euclidean distance between the vectors.
  */
-stock int NearestNeighborIndex(const float vec[3], Handle others) {
+stock int NearestNeighborIndex(const float vec[3], ArrayList others) {
     int closestIndex = -1;
     float closestDistance = 0.0;
-    for (int i = 0; i < GetArraySize(others); i++) {
+    for (int i = 0; i < others.Length; i++) {
         float tmp[3];
-        GetArrayArray(others, i, tmp);
+        others.GetArray(i, tmp);
         float dist = GetVectorDistance(vec, tmp);
         if (closestIndex < 0 || dist < closestDistance) {
             closestDistance = dist;
@@ -216,14 +232,15 @@ stock int NearestNeighborIndex(const float vec[3], Handle others) {
 }
 
 /**
- * Closes all handles within an array of handles.
+ * Closes all handles within an arraylist of arraylists.
  */
-stock void CloseHandleArray(Handle array) {
-    for (int i = 0; i < GetArraySize(array); i++) {
-        Handle tmp = GetArrayCell(array, i);
-        CloseHandle(tmp);
+stock void CloseNestedList(ArrayList list) {
+    int n = list.Length;
+    for (int i = 0; i < n; i++) {
+        ArrayList tmp = view_as<ArrayList>(list.Get(i));
+        delete tmp;
     }
-    CloseHandle(array);
+    delete list;
 }
 
 /**
@@ -307,7 +324,7 @@ stock int Client_RemoveAllMatchingWeapons(int client, const char[] exclude, bool
     int offset = Client_GetWeaponsOffset(client) - 4;
 
     int numWeaponsRemoved = 0;
-    for (int i=0; i < MAX_WEAPONS; i++) {
+    for (int i = 0; i < MAX_WEAPONS; i++) {
         offset += 4;
 
         int weapon = GetEntDataEnt2(client, offset);
@@ -333,4 +350,27 @@ stock int Client_RemoveAllMatchingWeapons(int client, const char[] exclude, bool
     }
 
     return numWeaponsRemoved;
+}
+
+stock ConVar FindCvarAndLogError(const char[] name) {
+    ConVar c = FindConVar(name);
+    if (c == null) {
+        LogError("ConVar \"%s\" could not be found");
+    }
+    return c;
+}
+
+stock void GetEnabledString(char[] buffer, int length, bool variable, int client=LANG_SERVER) {
+    if (variable)
+        Format(buffer, length, "%T", "Enabled", client);
+    else
+        Format(buffer, length, "%T", "Disabled", client);
+}
+
+public float fmin(float x, float y) {
+    return (x < y) ? x : y;
+}
+
+public float fmax(float x, float y) {
+    return (x < y) ? y : x;
 }

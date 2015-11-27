@@ -1,3 +1,31 @@
+1.1.1:
+- correct ``sm_multi1v1_mute_other_arenas`` behavior to not mute gunshots when the plugin is disabled
+- update polish translations (thanks spyrek)
+- update chinese translations (thanks 872517414)
+- remove some extraneous debug statements accidentally left in 1.1.0
+
+1.1.0:
+- correct a crash-causing issue on recent sourcemod builds when stats were enabled (it was a deadlock caused by SQL_SetCharSet happening inside a lock)
+- the weapons menu has been reworked to have toggle options per-round-type rather than a series of pages
+- add ``sm_reloadroundtypes`` admin command for reloading all round types (normally only happens on map changes)
+- block "regroup" radio command block and don't block radio commands when plugin is diabled
+- add ``sm_multi1v1_mute_other_arenas`` cvar (default 1) that mutes gunshots from arenas other than a client's closest one
+- adjust database stats to be enabled by default
+- remove cvar ``sm_multi1v1_database_name``
+- add a cookie for clients to hide stats (``multi1v1_hidestats``)
+- add cvar ``sm_multi1v1_use_assists`` for displaying rounds in arena 1 via the assists on the scoreboard
+- correct pistol-giving behavior on rifle rounds to match ``sm_multi1v1_pistol_behavior`` description
+- add norwegian translations (thanks bawls)
+
+1.0.2:
+- correct multi1v1_flashbangs addon not giving flashbangs correctly
+
+1.0.1:
+- Add cvar ``sm_multi1v1_enabled`` (default 1)
+- Add forward ``Multi1v1_OnSpawnsFound``
+- Add support for serverid (default 0) within the stats webpage and within the top url in the online_stats_viewer plugin
+- In addition to other plugins adding round types, simple round types can be defined in the new config file addons/sourcemod/configs/multi1v1_customrounds.cfg
+
 1.0.0:
  - **move to sourcemod 1.7 transitional syntax and API**
  - weapon lists are now stored in configs/multi1v1_weapons.cfg rather than hardcoded into the plugin

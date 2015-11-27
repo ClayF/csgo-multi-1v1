@@ -37,12 +37,12 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
     CreateNative("Multi1v1_ELORatingDelta", Native_ELORatingDelta);
     CreateNative("Multi1v1_GetNumSpawnsInArena", Native_GetNumSpawnsInArena);
     CreateNative("Multi1v1_GetArenaSpawn", Native_GetArenaSpawn);
+    CreateNative("Multi1v1_FindArenaNumber", Native_FindArenaNumber);
     CreateNative("Multi1v1_GetRifleChoice", Native_GetRifleChoice);
     CreateNative("Multi1v1_GetPistolChoice", Native_GetPistolChoice);
     CreateNative("Multi1v1_GetRoundTypeIndex", Native_GetRoundTypeIndex);
     CreateNative("Multi1v1_AddRoundType", Native_AddRoundType);
     CreateNative("Multi1v1_ClearRoundTypes", Native_ClearRoundTypes);
-    CreateNative("Multi1v1_ReturnMenuControl", Native_ReturnMenuControl);
     CreateNative("Multi1v1_AddStandardRounds", Native_AddStandardRounds);
     CreateNative("Multi1v1_GetCurrentRoundType", Native_GetCurrentRoundType);
     CreateNative("Multi1v1_GetNumRoundTypes", Native_GetNumRoundTypes);
@@ -52,6 +52,7 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
     CreateNative("Multi1v1_IsRoundTypeEnabled", Native_IsRoundTypeEnabled);
     CreateNative("Multi1v1_EnableRoundType", Native_EnableRoundType);
     CreateNative("Multi1v1_DisableRoundType", Native_DisableRoundType);
+    CreateNative("Multi1v1_GiveWeaponsMenu", Native_GiveWeaponsMenu);
     RegPluginLibrary("multi1v1");
     return APLRes_Success;
 }
@@ -163,7 +164,7 @@ public int Native_GetOpponent(Handle plugin, int numParams) {
 }
 
 public int Native_HasDatabase(Handle plugin, int numParams) {
-    return g_hUseDatabase.IntValue != 0 && g_dbConnected && db != INVALID_HANDLE;
+    return g_UseDatabaseCvar.IntValue != 0 && db != null;
 }
 
 public int Native_GetDatabase(Handle plugin, int numParams) {
@@ -186,7 +187,7 @@ public int Native_GivePlayerArenaWeapons(Handle plugin, int numParams) {
     } else {
         Handle pluginSource = g_RoundTypeSourcePlugin[roundType];
         RoundTypeWeaponHandler weaponHandler = g_RoundTypeWeaponHandlers[roundType];
-        Client_RemoveAllMatchingWeapons(client, "weapon_knife", true);
+        Client_RemoveAllWeapons(client);
         Call_StartFunction(pluginSource, weaponHandler);
         Call_PushCell(client);
         Call_Finish();
@@ -204,7 +205,7 @@ public int Native_Multi1v1Message(Handle plugin, int numParams) {
     FormatNativeString(0, 2, 3, sizeof(buffer), bytesWritten, buffer);
     char finalMsg[1024];
 
-    if (g_hUseChatPrefix.IntValue == 0)
+    if (g_UseChatPrefixCvar.IntValue == 0)
         Format(finalMsg, sizeof(finalMsg), " %s", buffer);
     else
         Format(finalMsg, sizeof(finalMsg), "%s%s", MESSAGE_PREFIX, buffer);
@@ -215,14 +216,15 @@ public int Native_Multi1v1Message(Handle plugin, int numParams) {
 
 public int Native_Multi1v1MessageToAll(Handle plugin, int numParams) {
     char buffer[1024];
+    char finalMsg[1024];
+
     int bytesWritten = 0;
     for (int i = 1; i <= MaxClients; i++) {
         if (IsValidClient(i)) {
             SetGlobalTransTarget(i);
             FormatNativeString(0, 1, 2, sizeof(buffer), bytesWritten, buffer);
-            char finalMsg[1024];
 
-            if (g_hUseChatPrefix.IntValue == 0)
+            if (g_UseChatPrefixCvar.IntValue == 0)
                 Format(finalMsg, sizeof(finalMsg), " %s", buffer);
             else
                 Format(finalMsg, sizeof(finalMsg), "%s%s", MESSAGE_PREFIX, buffer);
@@ -297,8 +299,8 @@ public int Native_GetNumSpawnsInArena(Handle plugin, int numParams) {
     int arena = GetNativeCell(1);
     CHECK_ARENA(arena);
 
-    Handle ct = view_as<Handle>(GetArrayCell(g_hCTSpawns, arena));
-    Handle t = view_as<Handle>(GetArrayCell(g_hTSpawns, arena));
+    ArrayList ct = view_as<ArrayList>(GetArrayCell(g_CTSpawnsList, arena - 1));
+    ArrayList t = view_as<ArrayList>(GetArrayCell(g_TSpawnsList, arena - 1));
     return Math_Min(GetArraySize(ct), GetArraySize(t));
 }
 
@@ -312,14 +314,14 @@ public int Native_GetArenaSpawn(Handle plugin, int numParams) {
     if (team != CS_TEAM_T && team != CS_TEAM_CT)
         ThrowNativeError(SP_ERROR_PARAM, "Invalid team: %d", team);
 
-    Handle spawns;
-    Handle angles;
+    ArrayList spawns;
+    ArrayList angles;
     if (team == CS_TEAM_CT) {
-        spawns = view_as<Handle>(GetArrayCell(g_hCTSpawns, arena - 1));
-        angles = view_as<Handle>(GetArrayCell(g_hCTAngles, arena - 1));
+        spawns = view_as<ArrayList>(GetArrayCell(g_CTSpawnsList, arena - 1));
+        angles = view_as<ArrayList>(GetArrayCell(g_CTAnglesList, arena - 1));
     } else {
-        spawns = view_as<Handle>(GetArrayCell(g_hTSpawns, arena - 1));
-        angles = view_as<Handle>(GetArrayCell(g_hTAngles, arena - 1));
+        spawns = view_as<ArrayList>(GetArrayCell(g_TSpawnsList, arena - 1));
+        angles = view_as<ArrayList>(GetArrayCell(g_TAnglesList, arena - 1));
     }
 
     int count = GetArraySize(spawns);
@@ -329,6 +331,12 @@ public int Native_GetArenaSpawn(Handle plugin, int numParams) {
 
     SetNativeArray(3, origin, sizeof(origin));
     SetNativeArray(4, angle, sizeof(angle));
+}
+
+public int Native_FindArenaNumber(Handle plugin, int numParams) {
+    float origin[3];
+    GetNativeArray(1, origin, 3);
+    return FindClosestArenaNumber(origin);
 }
 
 public int Native_GetRifleChoice(Handle plugin, int numParams) {
@@ -374,28 +382,16 @@ public int Native_AddRoundType(Handle plugin, int numParams) {
     }
 
     RoundTypeWeaponHandler weaponHandler = view_as<RoundTypeWeaponHandler>(GetNativeFunction(3));
-    RoundTypeMenuHandler menuHandler = view_as<RoundTypeMenuHandler>(GetNativeFunction(4));
-    bool optional = GetNativeCell(5);
-    bool ranked = GetNativeCell(6);
-    GetNativeString(7, ratingFieldName, sizeof(ratingFieldName));
-
-    // enabled may not be passed, default to true for backwards compatilibilty
-    bool enabled = true;
-    if (numParams >= 8) {
-        enabled = GetNativeCell(8);
-    }
+    bool optional = GetNativeCell(4);
+    bool ranked = GetNativeCell(5);
+    GetNativeString(6, ratingFieldName, sizeof(ratingFieldName));
+    bool enabled = GetNativeCell(7);
 
     if (!ranked && !StrEqual(ratingFieldName, "")) {
         LogError("Warning: marked round type \"%s\" as unranked but passed rating field name \"%s\"", internalName, ratingFieldName);
     }
 
-    return AddRoundType(plugin, displayName, internalName, weaponHandler, menuHandler, optional, ranked, ratingFieldName, enabled);
-}
-
-public int Native_ReturnMenuControl(Handle plugin, int numParams) {
-    int client = GetNativeCell(1);
-    CHECK_CONNECTED(client);
-    ReturnMenuControl(client);
+    return AddRoundType(plugin, displayName, internalName, weaponHandler, optional, ranked, ratingFieldName, enabled);
 }
 
 public int Native_GetRoundTypeIndex(Handle plugin, int numParams) {
@@ -462,4 +458,11 @@ public int Native_DisableRoundType(Handle plugin, int numParams) {
     int roundType = GetNativeCell(1);
     CHECK_ROUNDTYPE(roundType);
     g_RoundTypeEnabled[roundType] = false;
+}
+
+public int Native_GiveWeaponsMenu(Handle plugin, int numParams) {
+    int client = GetNativeCell(1);
+    CHECK_CONNECTED(client);
+    int pos = GetNativeCell(2);
+    GiveWeaponsMenu(client, pos);
 }
